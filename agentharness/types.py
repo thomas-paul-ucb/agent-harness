@@ -52,3 +52,6 @@ class RunResult:
     final_answer: str | None
     steps: list[StepRecord] = field(default_factory=list)
     stopped_reason: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_hit: bool = False
