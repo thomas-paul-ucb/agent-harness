@@ -8,15 +8,17 @@ autonomous behavior bounded and debuggable:
   - it detects when the model calls the same tool with the same
     arguments repeatedly (a common failure mode: the model gets "stuck")
   - it records every step so a failed run can be replayed and inspected
+  - it enforces a token budget on the conversation before every model
+    call, trimming the least-relevant tool results first (see budget.py)
 """
 
 from __future__ import annotations
 
 import json
-import time
 
 import anthropic
 
+from agentharness.budget import TokenBudget
 from agentharness.tools import ToolRegistry
 from agentharness.types import (
     RunResult,
@@ -35,6 +37,7 @@ class Agent:
         max_steps: int = 10,
         max_repeat_calls: int = 2,
         system_prompt: str = "You are a careful, methodical agent. Use tools when needed.",
+        budget: TokenBudget | None = None,
     ) -> None:
         self.client = client
         self.tools = tools
@@ -42,6 +45,7 @@ class Agent:
         self.max_steps = max_steps
         self.max_repeat_calls = max_repeat_calls
         self.system_prompt = system_prompt
+        self.budget = budget  # optional: if None, no trimming happens
 
     def run(self, task: str) -> RunResult:
         messages: list[dict] = [{"role": "user", "content": task}]
@@ -49,6 +53,9 @@ class Agent:
         recent_calls: list[tuple[str, str]] = []  # (tool_name, json-args) history
 
         for step_number in range(1, self.max_steps + 1):
+            if self.budget is not None:
+                messages, _ = self.budget.enforce(messages, self.system_prompt, task)
+
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=1024,
