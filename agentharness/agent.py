@@ -12,6 +12,8 @@ keep the model's autonomous behavior bounded and debuggable:
     call, trimming the least-relevant tool results first (see budget.py)
   - it checks a semantic cache before running at all, so a task similar
     to one already solved skips the loop entirely (see cache.py)
+  - it tracks real token usage (from the API's own usage report) across
+    every step, so RunResult reflects actual cost, not an estimate
 """
 
 from __future__ import annotations
@@ -60,11 +62,14 @@ class Agent:
                     final_answer=cached_answer,
                     steps=[],
                     stopped_reason="semantic_cache_hit",
+                    cache_hit=True,
                 )
 
         messages: list[dict] = [{"role": "user", "content": task}]
         steps: list[StepRecord] = []
         recent_calls: list[tuple[str, str]] = []  # (tool_name, json-args) history
+        total_input_tokens = 0
+        total_output_tokens = 0
 
         for step_number in range(1, self.max_steps + 1):
             if self.budget is not None:
@@ -77,6 +82,8 @@ class Agent:
                 tools=self.tools.schemas(),
                 messages=messages,
             )
+            total_input_tokens += response.usage.input_tokens
+            total_output_tokens += response.usage.output_tokens
 
             tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
             text_blocks = [b for b in response.content if b.type == "text"]
@@ -93,7 +100,12 @@ class Agent:
                 )
                 if self.cache is not None:
                     self.cache.store(task, final_text)
-                return RunResult(final_answer=final_text, steps=steps)
+                return RunResult(
+                    final_answer=final_text,
+                    steps=steps,
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                )
 
             # Only handle the first tool call per step for simplicity;
             # extend here for parallel tool calls if needed.
@@ -113,6 +125,8 @@ class Agent:
                         f"Detected repeated identical call to '{call.name}' "
                         f"({repeat_count} times) — stopping to avoid an infinite loop."
                     ),
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
                 )
 
             result = self.tools.execute(call)
@@ -151,4 +165,6 @@ class Agent:
             final_answer=None,
             steps=steps,
             stopped_reason=f"Reached max_steps ({self.max_steps}) without a final answer.",
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
         )
