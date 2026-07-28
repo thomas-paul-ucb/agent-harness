@@ -4,6 +4,9 @@ This is the piece that stops a single flaky tool (a timed-out search API,
 a rate-limited endpoint) from silently corrupting the agent's reasoning.
 Every tool call goes through here — never call a tool function directly
 from the loop.
+
+If a ToolCache is provided, exact-match calls are served from cache
+before the real tool function ever runs.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from agentharness.tool_cache import ToolCache
 from agentharness.types import ToolCall, ToolResult
 
 
@@ -23,13 +27,15 @@ class Tool:
     fn: Callable[..., Any]
     max_retries: int = 2
     backoff_seconds: float = 1.0
+    cacheable: bool = True  # set False for tools whose output changes call to call (e.g. "current time")
 
 
 class ToolRegistry:
-    """Holds available tools and executes calls safely."""
+    """Holds available tools and executes calls safely, with optional caching."""
 
-    def __init__(self) -> None:
+    def __init__(self, cache: ToolCache | None = None) -> None:
         self._tools: dict[str, Tool] = {}
+        self._cache = cache
 
     def register(self, tool: Tool) -> None:
         if tool.name in self._tools:
@@ -51,12 +57,11 @@ class ToolRegistry:
         ]
 
     def execute(self, call: ToolCall) -> ToolResult:
-        """Execute a tool call with retry + exponential backoff.
+        """Execute a tool call, serving from cache on an exact-match hit,
+        with retry + backoff on an actual (uncached) execution.
 
-        Returns a ToolResult either way — callers should never need a
-        try/except around this. A failed tool call is data, not an
-        exception, so the agent loop can reason about it (e.g. tell the
-        model "that tool failed, try something else").
+        Always returns a ToolResult — never raises. A failed tool call is
+        data the agent can reason about, not an exception to catch.
         """
         tool = self.get(call.name)
         if tool is None:
@@ -66,10 +71,17 @@ class ToolRegistry:
                 error=f"Unknown tool '{call.name}'",
             )
 
+        if self._cache is not None and tool.cacheable:
+            cached = self._cache.lookup(call.name, call.arguments)
+            if cached is not None:
+                return ToolResult(call_id=call.call_id, success=True, output=cached, attempts=0)
+
         last_error: str | None = None
         for attempt in range(1, tool.max_retries + 2):  # +1 initial try
             try:
                 output = tool.fn(**call.arguments)
+                if self._cache is not None and tool.cacheable:
+                    self._cache.store(call.name, call.arguments, output)
                 return ToolResult(
                     call_id=call.call_id,
                     success=True,
