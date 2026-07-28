@@ -1,8 +1,8 @@
 """The agent loop itself: decide -> act -> observe -> repeat.
 
-This is the heart of the harness. Everything else (tools.py, budget.py)
-plugs into this loop. The loop's only job is to keep the model's
-autonomous behavior bounded and debuggable:
+This is the heart of the harness. Everything else (tools.py, budget.py,
+cache.py, tool_cache.py) plugs into this loop. The loop's only job is to
+keep the model's autonomous behavior bounded and debuggable:
 
   - it forces a stop after `max_steps` iterations (no infinite loops)
   - it detects when the model calls the same tool with the same
@@ -10,6 +10,8 @@ autonomous behavior bounded and debuggable:
   - it records every step so a failed run can be replayed and inspected
   - it enforces a token budget on the conversation before every model
     call, trimming the least-relevant tool results first (see budget.py)
+  - it checks a semantic cache before running at all, so a task similar
+    to one already solved skips the loop entirely (see cache.py)
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ import json
 import anthropic
 
 from agentharness.budget import TokenBudget
+from agentharness.cache import SemanticCache
 from agentharness.tools import ToolRegistry
 from agentharness.types import (
     RunResult,
@@ -38,6 +41,7 @@ class Agent:
         max_repeat_calls: int = 2,
         system_prompt: str = "You are a careful, methodical agent. Use tools when needed.",
         budget: TokenBudget | None = None,
+        cache: SemanticCache | None = None,
     ) -> None:
         self.client = client
         self.tools = tools
@@ -45,9 +49,19 @@ class Agent:
         self.max_steps = max_steps
         self.max_repeat_calls = max_repeat_calls
         self.system_prompt = system_prompt
-        self.budget = budget  # optional: if None, no trimming happens
+        self.budget = budget  # optional: if None, no context trimming happens
+        self.cache = cache  # optional: if None, every task runs the full loop
 
     def run(self, task: str) -> RunResult:
+        if self.cache is not None:
+            cached_answer = self.cache.lookup(task)
+            if cached_answer is not None:
+                return RunResult(
+                    final_answer=cached_answer,
+                    steps=[],
+                    stopped_reason="semantic_cache_hit",
+                )
+
         messages: list[dict] = [{"role": "user", "content": task}]
         steps: list[StepRecord] = []
         recent_calls: list[tuple[str, str]] = []  # (tool_name, json-args) history
@@ -77,6 +91,8 @@ class Agent:
                         model_text=final_text,
                     )
                 )
+                if self.cache is not None:
+                    self.cache.store(task, final_text)
                 return RunResult(final_answer=final_text, steps=steps)
 
             # Only handle the first tool call per step for simplicity;
