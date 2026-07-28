@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentharness"
+version = "0.1.0"
+description = "A control layer for Claude tool-use agents"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=0.40.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["agentharness*"]
