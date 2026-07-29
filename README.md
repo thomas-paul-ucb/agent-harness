@@ -1,19 +1,19 @@
 # agent-harness
 
-A control layer for Claude tool-use agents. It manages the **decide → act → observe → repeat** loop that turns a raw LLM into a working agent — plus three layers of token/cost optimization that most agent demos skip entirely.
+A control layer for Claude tool-use agents. It manages the **decide → act → observe → repeat** loop that turns a raw LLM into a working agent - plus three layers of token/cost optimization that most agent demos skip entirely.
 
 ## What it does
 
 **Core loop**
-- **Bounded execution** — a hard `max_steps` ceiling so an agent can never run forever
-- **Stuck-loop detection** — stops the agent if it calls the same tool with the same arguments too many times in a row
-- **Retry with backoff** — tool failures are retried automatically, then surfaced to the model as data it can reason about, not swallowed as exceptions
-- **Full step tracing** — every decision, tool call, and result is recorded for replay/debugging
+- **Bounded execution** - a hard `max_steps` ceiling so an agent can never run forever
+- **Stuck-loop detection** - stops the agent if it calls the same tool with the same arguments too many times in a row
+- **Retry with backoff** - tool failures are retried automatically, then surfaced to the model as data it can reason about, not swallowed as exceptions
+- **Full step tracing** - every decision, tool call, and result is recorded for replay/debugging
 
 **Token optimization (three layers, three different scopes)**
-- **Semantic task cache** (`cache.py`) — before running a task at all, checks if a similar task was already solved (embedding similarity via chromadb). A hit skips the whole loop, ~0 tokens.
-- **Token budget / context assembler** (`budget.py`) — within a run, scores every tool result by semantic relevance to the current task (not just recency) and trims the least-relevant ones first when context grows too large.
-- **Tool-call cache** (`tool_cache.py`) — exact-match memoization per `(tool_name, arguments)`, so the same tool call is never re-executed, even across different tasks. Per-tool opt-out (`cacheable=False`) for tools whose output changes over time.
+- **Semantic task cache** (`cache.py`) - before running a task at all, checks if a similar task was already solved (embedding similarity via chromadb). A hit skips the whole loop, ~0 tokens.
+- **Token budget / context assembler** (`budget.py`) - within a run, scores every tool result by semantic relevance to the current task (not just recency) and trims the least-relevant ones first when context grows too large.
+- **Tool-call cache** (`tool_cache.py`) - exact-match memoization per `(tool_name, arguments)`, so the same tool call is never re-executed, even across different tasks. Per-tool opt-out (`cacheable=False`) for tools whose output changes over time.
 
 **Metrics** (`metrics.py`) — turns a batch of runs into a cache-hit rate and an estimated token-savings comparison against a naive baseline.
 
